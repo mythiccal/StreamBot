@@ -1,4 +1,4 @@
-import { Client, TextChannel, CustomStatus, ActivityOptions, MessageAttachment } from "discord.js-selfbot-v13";
+import { Client, TextChannel, CustomStatus, ActivityOptions, MessageAttachment, StageChannel } from "discord.js-selfbot-v13";
 import { streamLivestreamVideo, MediaUdp, StreamOptions, Streamer, Utils } from "@dank074/discord-video-stream";
 import config from "./config.js"
 import fs from 'fs';
@@ -8,6 +8,7 @@ import yts from 'play-dl';
 import ffmpeg from 'fluent-ffmpeg';
 import { getVideoParams, ffmpegScreenshot } from "./utils/ffmpeg.js";
 import PCancelable from "p-cancelable";
+import fetch from 'node-fetch';
 
 const streamer = new Streamer(new Client());
 let command: PCancelable<string> | undefined;
@@ -100,6 +101,7 @@ const streamStatus = {
     joined: false,
     joinsucc: false,
     playing: false,
+    isStage: false,
     channelInfo: {
         guildId: config.guildId,
         channelId: config.videoChannelId,
@@ -114,6 +116,7 @@ streamer.client.on('voiceStateUpdate', (oldState, newState) => {
             streamStatus.joined = false;
             streamStatus.joinsucc = false;
             streamStatus.playing = false;
+            streamStatus.isStage = false;
             streamStatus.channelInfo = {
                 guildId: config.guildId,
                 channelId: config.videoChannelId,
@@ -156,6 +159,7 @@ streamer.client.on('messageCreate', async (message) => {
                         message.reply('** Already joined **');
                         return;
                     }
+                    
                     // Get video name and find video file
                     const videoname = args.shift()
                     const video = videos.find(m => m.name == videoname);
@@ -165,9 +169,51 @@ streamer.client.on('messageCreate', async (message) => {
                         return;
                     }
 
-                    // Check if the respect video parameters environment variable is enabled
+                    const channel = streamer.client.channels.cache.get(channelId);
+                    if (!channel) {
+                        message.reply('** Channel not found **');
+                        return;
+                    }
+
+                    if (channel.type === 'GUILD_STAGE_VOICE') {
+                        const stageChannel = channel as StageChannel;
+                        streamStatus.isStage = true;
+
+                        try {
+                            await streamer.joinVoice(guildId, channelId, streamOpts);
+                            streamStatus.joined = true;
+
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+
+                            await fetch(`https://discord.com/api/v9/guilds/${guildId}/voice-states/@me`, {
+                                method: 'PATCH',
+                                headers: {
+                                    'Authorization': streamer.client.token || '',
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    channel_id: channelId,
+                                    suppress: false
+                                })
+                            });
+
+                            console.log('Successfully joined stage channel as speaker');
+
+                        } catch (error: any) {
+                            console.error('Failed to join stage channel:', error);
+                            const errorMessage = error?.message || 'Unknown error occurred';
+                            message.reply(`** Failed to join stage channel: ${errorMessage} **`);
+                            streamer.leaveVoice();
+                            streamStatus.joined = false;
+                            streamStatus.isStage = false;
+                            return;
+                        }
+                    } else {
+                        await streamer.joinVoice(guildId, channelId, streamOpts);
+                        streamStatus.joined = true;
+                    }
+
                     if (config.respect_video_params) {
-                        // Checking video params
                         try {
                             const resolution = await getVideoParams(video.path);
                             streamOpts.height = resolution.height;
@@ -189,8 +235,6 @@ streamer.client.on('messageCreate', async (message) => {
                         }
                     }
 
-                    await streamer.joinVoice(guildId, channelId, streamOpts);
-                    streamStatus.joined = true;
                     streamStatus.playing = true;
                     streamStatus.channelInfo = {
                         guildId: guildId,
@@ -311,6 +355,7 @@ streamer.client.on('messageCreate', async (message) => {
                         message.reply('**Already Stopped!**');
                         return;
                     }
+
                     streamer.leaveVoice()
                     streamStatus.joined = false;
                     streamStatus.joinsucc = false;
