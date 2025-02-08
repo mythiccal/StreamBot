@@ -161,6 +161,29 @@ streamer.client.on('messageCreate', async (message) => {
                         return;
                     }
 
+                    // Add video parameters handling
+                    if (config.respect_video_params) {
+                        try {
+                            const resolution = await getVideoParams(video.path);
+                            streamOpts.height = resolution.height;
+                            streamOpts.width = resolution.width;
+                            if (resolution.bitrate != "N/A") {
+                                streamOpts.bitrateKbps = Math.floor(Number(resolution.bitrate) / 1000);
+                            }
+
+                            if (resolution.maxbitrate != "N/A") {
+                                streamOpts.maxBitrateKbps = Math.floor(Number(resolution.maxbitrate) / 1000);
+                            }
+
+                            if (resolution.fps) {
+                                streamOpts.fps = resolution.fps
+                            }
+
+                        } catch (error) {
+                            logger.error('Unable to determine resolution, using static resolution....', error);
+                        }
+                    }
+
                     const channel = streamer.client.channels.cache.get(channelId);
                     if (!channel) {
                         message.reply('** Channel not found **');
@@ -190,6 +213,19 @@ streamer.client.on('messageCreate', async (message) => {
                             });
 
                             console.log('Successfully joined stage channel as speaker');
+                            
+                            // Add streaming logic here after stage join
+                            const streamUdpConn = await streamer.createStream(streamOpts);
+                            streamStatus.playing = true;
+                            streamStatus.channelInfo = {
+                                guildId: guildId,
+                                channelId: channelId,
+                                cmdChannelId: message.channel.id
+                            }
+                            
+                            logger.info(`Playing local video: ${video.path}`);
+                            sendPlaying(message, videoname || "Local Video");
+                            playVideo(video.path, streamUdpConn, videoname);
 
                         } catch (error: any) {
                             console.error('Failed to join stage channel:', error);
@@ -203,52 +239,19 @@ streamer.client.on('messageCreate', async (message) => {
                     } else {
                         await streamer.joinVoice(guildId, channelId, streamOpts);
                         streamStatus.joined = true;
-                    }
-
-                    if (config.respect_video_params) {
-                        try {
-                            const resolution = await getVideoParams(video.path);
-                            streamOpts.height = resolution.height;
-                            streamOpts.width = resolution.width;
-                            if (resolution.bitrate != "N/A") {
-                                streamOpts.bitrateKbps = Math.floor(Number(resolution.bitrate) / 1000);
-                            }
-
-                            if (resolution.maxbitrate != "N/A") {
-                                streamOpts.maxBitrateKbps = Math.floor(Number(resolution.bitrate) / 1000);
-                            }
-
-                            if (resolution.fps) {
-                                streamOpts.fps = resolution.fps
-                            }
-
-                        } catch (error) {
-                            logger.error('Unable to determine resolution, using static resolution....', error);
+                        
+                        // Move the streaming logic here from below
+                        const streamUdpConn = await streamer.createStream(streamOpts);
+                        streamStatus.playing = true;
+                        streamStatus.channelInfo = {
+                            guildId: guildId,
+                            channelId: channelId,
+                            cmdChannelId: message.channel.id
                         }
+                        logger.info(`Playing local video: ${video.path}`);
+                        sendPlaying(message, videoname || "Local Video");
+                        playVideo(video.path, streamUdpConn, videoname);
                     }
-
-                    // Join voice channel
-                    await streamer.joinVoice(guildId, channelId, streamOpts)
-
-                    // Create stream
-                    const streamUdpConn = await streamer.createStream(streamOpts);
-
-                    streamStatus.joined = true;
-                    streamStatus.playing = true;
-                    streamStatus.channelInfo = {
-                        guildId: guildId,
-                        channelId: channelId,
-                        cmdChannelId: message.channel.id
-                    }
-
-                    // Log playing video
-                    logger.info(`Playing local video: ${video.path}`);
-
-                    // Send playing message
-                    sendPlaying(message, videoname || "Local Video");
-
-                    // Play video
-                    playVideo(video.path, streamUdpConn, videoname);
                 }
                 break;
             case 'playlink':
